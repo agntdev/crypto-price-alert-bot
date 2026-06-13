@@ -2,6 +2,7 @@ import type { Bot } from "grammy";
 import type { Context } from "./toolkit";
 import { fetchPrices } from "./priceApi";
 import type { PriceAlert } from "./schema";
+import { sendPriceAlert } from "./notify";
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_THRESHOLD_PERCENT = 5;
@@ -151,20 +152,12 @@ export class PriceMonitor {
             previousPrice: baselinePrice,
           };
 
-          const emoji = direction === "up" ? "📈" : "📉";
-          const message =
-            `${emoji} *${symbol}* ${direction} ${Math.abs(percentChange).toFixed(2)}%\n` +
-            `Price: $${currentPrice.toFixed(4)}\n` +
-            `Previous (24h): $${baselinePrice.toFixed(4)}`;
-
-          this.bot.api
-            .sendMessage(chatId, message, { parse_mode: "Markdown" })
-            .catch((err) => {
-              console.error(
-                `Failed to send alert to chat ${chatId}:`,
-                err,
-              );
-            });
+          sendPriceAlert(this.bot, chatId, alert).catch((err) => {
+            console.error(
+              `Failed to send alert to chat ${chatId}:`,
+              err,
+            );
+          });
         }
 
         state.lastPrice = currentPrice;
