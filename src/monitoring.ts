@@ -9,6 +9,8 @@ const DEFAULT_THRESHOLD_PERCENT = 5;
 interface CoinState {
   lastPrice: number;
   lastCheckedAt: string;
+  priceHistory: Array<{ timestamp: string; price: number }>;
+  lastAlertDirection?: "up" | "down";
 }
 
 export class PriceMonitor {
@@ -43,6 +45,7 @@ export class PriceMonitor {
       chatCoins.set(symbol.toUpperCase(), {
         lastPrice: info.price,
         lastCheckedAt: now,
+        priceHistory: [{ timestamp: now, price: info.price }],
       });
     }
   }
@@ -106,26 +109,38 @@ export class PriceMonitor {
     }
 
     const now = new Date().toISOString();
-    const alerts: Array<{ chatId: number; alert: PriceAlert }> = [];
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
 
     for (const [chatId, coins] of this.tracking) {
       for (const [symbol, state] of coins) {
         const currentPrice = prices[symbol];
         if (currentPrice == null) continue;
 
-        const previousPrice = state.lastPrice;
-        if (previousPrice <= 0) {
-          state.lastPrice = currentPrice;
-          state.lastCheckedAt = now;
+        state.priceHistory.push({ timestamp: now, price: currentPrice });
+        state.priceHistory = state.priceHistory.filter(
+          (entry) => new Date(entry.timestamp).getTime() >= cutoff,
+        );
+
+        const baselineEntry = state.priceHistory[0];
+        if (!baselineEntry) {
+          continue;
+        }
+
+        const baselinePrice = baselineEntry.price;
+        if (baselinePrice <= 0) {
           continue;
         }
 
         const percentChange =
-          ((currentPrice - previousPrice) / previousPrice) * 100;
+          ((currentPrice - baselinePrice) / baselinePrice) * 100;
 
         if (Math.abs(percentChange) >= this.threshold) {
           const direction: "up" | "down" =
             percentChange >= 0 ? "up" : "down";
+
+          if (state.lastAlertDirection === direction) continue;
+
+          state.lastAlertDirection = direction;
 
           const alert: PriceAlert = {
             coinSymbol: symbol,
@@ -133,16 +148,14 @@ export class PriceMonitor {
             percentChange: Math.abs(percentChange),
             direction,
             currentPrice,
-            previousPrice,
+            previousPrice: baselinePrice,
           };
-
-          alerts.push({ chatId, alert });
 
           const emoji = direction === "up" ? "📈" : "📉";
           const message =
             `${emoji} *${symbol}* ${direction} ${Math.abs(percentChange).toFixed(2)}%\n` +
             `Price: $${currentPrice.toFixed(4)}\n` +
-            `Previous: $${previousPrice.toFixed(4)}`;
+            `Previous (24h): $${baselinePrice.toFixed(4)}`;
 
           this.bot.api
             .sendMessage(chatId, message, { parse_mode: "Markdown" })
@@ -154,7 +167,7 @@ export class PriceMonitor {
             });
         }
 
-        state.lastPrice = prices[symbol] !== undefined ? prices[symbol] : state.lastPrice;
+        state.lastPrice = currentPrice;
         state.lastCheckedAt = now;
       }
     }
