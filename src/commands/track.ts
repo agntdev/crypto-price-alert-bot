@@ -3,6 +3,7 @@ import type { Context } from "../toolkit";
 import { MAX_TRACKED_COINS } from "../schema";
 import type { TrackedCoin } from "../schema";
 import { fetchPrices } from "../priceApi";
+import { priceMonitor } from "../bot";
 
 const SUPPORTED_COINS = new Set([
   "BTC",
@@ -123,6 +124,14 @@ export async function handleTrackCallbacks(
         lastPrice: prices[symbol] ?? 0,
         lastCheckedAt: now,
       };
+    }
+
+    if (ctx.chat) {
+      const coinPrices: Record<string, { price: number }> = {};
+      for (const symbol of pending) {
+        coinPrices[symbol] = { price: prices[symbol] ?? 0 };
+      }
+      priceMonitor.addTracking(ctx.chat.id, coinPrices);
     }
 
     ctx.session.pendingTrackCoins = undefined;
