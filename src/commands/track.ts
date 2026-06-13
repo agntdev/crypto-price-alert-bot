@@ -2,6 +2,7 @@ import type { CommandContext, CallbackQueryContext } from "grammy";
 import type { Context } from "../toolkit";
 import { MAX_TRACKED_COINS } from "../schema";
 import type { TrackedCoin } from "../schema";
+import { fetchPrices } from "../priceApi";
 
 const SUPPORTED_COINS = new Set([
   "BTC",
@@ -115,10 +116,11 @@ export async function handleTrackCallbacks(
     }
 
     const now = new Date().toISOString();
+    const prices = await fetchPrices(pending);
     for (const symbol of pending) {
       ctx.session.trackedCoins[symbol] = {
         symbol,
-        lastPrice: 0,
+        lastPrice: prices[symbol] ?? 0,
         lastCheckedAt: now,
       };
     }
