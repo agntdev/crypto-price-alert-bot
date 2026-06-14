@@ -2,6 +2,7 @@ import type { Bot } from "grammy";
 import type { Context } from "./toolkit";
 import { fetchPrices } from "./priceApi";
 import type { PriceAlert } from "./schema";
+import type { CoinTrackingState, PriceHistoryEntry } from "./types";
 import { sendPriceAlert } from "./notify";
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
@@ -10,7 +11,7 @@ const DEFAULT_THRESHOLD_PERCENT = 5;
 interface CoinState {
   lastPrice: number;
   lastCheckedAt: string;
-  priceHistory: Array<{ timestamp: string; price: number }>;
+  priceHistory: PriceHistoryEntry[];
   lastAlertDirection?: "up" | "down";
 }
 
@@ -20,6 +21,7 @@ export class PriceMonitor {
   private timer: ReturnType<typeof setInterval> | null = null;
   private intervalMs: number;
   private threshold: number;
+  private pendingAlerts: Map<number, PriceAlert[]> = new Map();
 
   constructor(
     bot: Bot<Context>,
@@ -29,6 +31,55 @@ export class PriceMonitor {
     this.bot = bot;
     this.intervalMs = intervalMs;
     this.threshold = thresholdPercent;
+  }
+
+  drainAlerts(chatId: number): PriceAlert[] {
+    const alerts = this.pendingAlerts.get(chatId);
+    if (!alerts || alerts.length === 0) return [];
+    this.pendingAlerts.set(chatId, []);
+    return alerts;
+  }
+
+  syncFromSession(
+    chatId: number,
+    trackingState: Record<string, CoinTrackingState>,
+  ): void {
+    if (!trackingState || Object.keys(trackingState).length === 0) return;
+
+    let chatCoins = this.tracking.get(chatId);
+    if (!chatCoins) {
+      chatCoins = new Map();
+      this.tracking.set(chatId, chatCoins);
+    }
+
+    for (const [symbol, state] of Object.entries(trackingState)) {
+      if (!chatCoins.has(symbol)) {
+        chatCoins.set(symbol, {
+          lastPrice: state.lastPrice,
+          lastCheckedAt: state.lastCheckedAt,
+          priceHistory: [...state.priceHistory],
+          lastAlertDirection: state.lastAlertDirection,
+        });
+      }
+    }
+  }
+
+  getTrackingSnapshot(
+    chatId: number,
+  ): Record<string, CoinTrackingState> | undefined {
+    const chatCoins = this.tracking.get(chatId);
+    if (!chatCoins || chatCoins.size === 0) return undefined;
+
+    const snapshot: Record<string, CoinTrackingState> = {};
+    for (const [symbol, state] of chatCoins) {
+      snapshot[symbol] = {
+        lastPrice: state.lastPrice,
+        lastCheckedAt: state.lastCheckedAt,
+        priceHistory: [...state.priceHistory],
+        lastAlertDirection: state.lastAlertDirection,
+      };
+    }
+    return snapshot;
   }
 
   addTracking(
@@ -158,6 +209,13 @@ export class PriceMonitor {
               err,
             );
           });
+
+          const alerts = this.pendingAlerts.get(chatId);
+          if (alerts) {
+            alerts.push(alert);
+          } else {
+            this.pendingAlerts.set(chatId, [alert]);
+          }
         }
 
         state.lastPrice = currentPrice;
